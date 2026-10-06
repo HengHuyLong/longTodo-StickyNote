@@ -11,7 +11,7 @@
         <span class="note-date">{{ formattedDate }}</span>
         <span v-if="note.pinned" class="pin-badge" title="Pinned">📌</span>
       </div>
-      <div class="header-actions">
+      <div class="header-actions" :class="{ 'is-copied': copied }">
         <!-- Startup Toggle -->
           <button class="header-btn"
             @click.stop="$emit('toggle-startup', note.id)"
@@ -21,6 +21,23 @@
               <path d="M8 13V3M8 3L4 7M8 3L12 7" :stroke="note.openOnStartup ? '#10b981' : 'currentColor'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
+
+          <!-- Copy Completed Tasks -->
+          <span v-if="completedCount > 0" class="copy-slot">
+            <button class="header-btn"
+              @click.stop="copyCompletedTasks"
+              :title="copied ? 'Copied' : 'Copy completed tasks'"
+            >
+              <svg v-if="copied" class="copied-check" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M5.5 4V3C5.5 2.44772 5.94772 2 6.5 2H13.5C14.0523 2 14.5 2.44772 14.5 3V10C14.5 10.5523 14.0523 11 13.5 11H12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                <rect x="2.5" y="5" width="8" height="9" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              </svg>
+            </button>
+            <span v-if="copied" class="copied-hint">Copied</span>
+          </span>
 
           <!-- Pop Out -->
         <button 
@@ -141,37 +158,67 @@
           />
         </div>
 
-        <TransitionGroup name="task" tag="div" class="todo-list">
-          <TodoItem
-            v-for="todo in doneTodos"
-            :key="todo.id"
-            :todo="todo"
-            :accent-color="note.color.text"
-            :dark-color="note.color.dark"
-            @toggle="$emit('toggle-todo', note.id, $event)"
-            @update="(todoId, text) => $emit('update-todo', note.id, todoId, text)"
-            @delete="$emit('delete-todo', note.id, $event)"
-            @add-next="$emit('add-todo', note.id)"
-            ref="todoItemRefs"
-          />
-          <div
-            v-if="doneTodos.length && openTodos.length"
-            key="todo-divider"
-            class="todo-divider"
-          />
-          <TodoItem
-            v-for="todo in openTodos"
-            :key="todo.id"
-            :todo="todo"
-            :accent-color="note.color.text"
-            :dark-color="note.color.dark"
-            @toggle="$emit('toggle-todo', note.id, $event)"
-            @update="(todoId, text) => $emit('update-todo', note.id, todoId, text)"
-            @delete="$emit('delete-todo', note.id, $event)"
-            @add-next="$emit('add-todo', note.id)"
-            ref="todoItemRefs"
-          />
-        </TransitionGroup>
+        <template v-if="note.todos.length">
+          <draggable
+            v-model="doneList"
+            item-key="id"
+            :group="{ name: 'tasks', pull: true, put: true }"
+            handle=".todo-checkbox"
+            :delay="140"
+            :delay-on-touch-only="false"
+            :force-fallback="true"
+            :fallback-on-body="true"
+            :animation="150"
+            class="todo-list"
+            :class="{ 'drop-target': doneList.length === 0 && openList.length > 0 }"
+            @start="dragging = true"
+            @end="onDragEnd"
+          >
+            <template #item="{ element: todo }">
+              <TodoItem
+                :todo="todo"
+                :accent-color="note.color.text"
+                :dark-color="note.color.dark"
+                @toggle="$emit('toggle-todo', note.id, $event)"
+                @update="(todoId, text) => $emit('update-todo', note.id, todoId, text)"
+                @update-description="(todoId, desc) => $emit('update-todo-description', note.id, todoId, desc)"
+                @delete="$emit('delete-todo', note.id, $event)"
+                @add-next="$emit('add-todo', note.id)"
+                ref="todoItemRefs"
+              />
+            </template>
+          </draggable>
+          <div class="todo-divider" />
+          <draggable
+            v-model="openList"
+            item-key="id"
+            :group="{ name: 'tasks', pull: true, put: true }"
+            handle=".todo-checkbox"
+            :delay="140"
+            :delay-on-touch-only="false"
+            :force-fallback="true"
+            :fallback-on-body="true"
+            :animation="150"
+            class="todo-list"
+            :class="{ 'drop-target': openList.length === 0 && doneList.length > 0 }"
+            @start="dragging = true"
+            @end="onDragEnd"
+          >
+            <template #item="{ element: todo }">
+              <TodoItem
+                :todo="todo"
+                :accent-color="note.color.text"
+                :dark-color="note.color.dark"
+                @toggle="$emit('toggle-todo', note.id, $event)"
+                @update="(todoId, text) => $emit('update-todo', note.id, todoId, text)"
+                @update-description="(todoId, desc) => $emit('update-todo-description', note.id, todoId, desc)"
+                @delete="$emit('delete-todo', note.id, $event)"
+                @add-next="$emit('add-todo', note.id)"
+                ref="todoItemRefs"
+              />
+            </template>
+          </draggable>
+        </template>
 
         <button 
           class="add-todo-btn"
@@ -223,7 +270,8 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue';
+import { ref, computed, nextTick, watch } from 'vue';
+import draggable from 'vuedraggable';
 import TodoItem from './TodoItem.vue';
 import { textOn, isLightHex } from '../composables/useNotes.js';
 import { appTheme } from '../composables/useTheme.js';
@@ -236,10 +284,16 @@ const props = defineProps({
 
 const emit = defineEmits([
   'update', 'delete', 'toggle-pin', 'change-color',
-  'add-todo', 'toggle-todo', 'update-todo', 'delete-todo', 'pop-out', 'toggle-startup'
+  'add-todo', 'toggle-todo', 'update-todo', 'update-todo-description', 'delete-todo', 'pop-out', 'toggle-startup'
 ]);
 
 const isExpanded = ref(true);
+const copied = ref(false);
+let copiedTimer = 0;
+const dragging = ref(false);
+const doneList = ref([]);
+const openList = ref([]);
+let writingLists = false;
 const showColorPicker = ref(false);
 const notesOpen = ref(false);
 const notesRef = ref(null);
@@ -249,6 +303,17 @@ const formattedDate = computed(() => props.formatDate(props.note.createdAt));
 
 const doneTodos = computed(() => (props.note.todos || []).filter(t => t.completed));
 const openTodos = computed(() => (props.note.todos || []).filter(t => !t.completed));
+
+watch(
+  () => (props.note.todos || []).map((t) => `${t.id}:${t.completed ? 1 : 0}`).join('|'),
+  () => {
+    if (writingLists || dragging.value) return;
+    const list = props.note.todos || [];
+    doneList.value = list.filter((t) => t.completed);
+    openList.value = list.filter((t) => !t.completed);
+  },
+  { immediate: true }
+);
 
 const completedCount = computed(() => doneTodos.value.length);
 
@@ -290,6 +355,44 @@ function openNotes() {
 function removeNotes() {
   notesOpen.value = false;
   emit('update', props.note.id, { content: '' });
+}
+
+async function copyCompletedTasks() {
+  const completed = props.note.todos.filter(t => t.completed);
+  if (completed.length === 0) return;
+  const text = completed.map(t => `- ${t.text}`).join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    copied.value = true;
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { copied.value = false; }, 1000);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function onDragEnd() {
+  const seen = new Set();
+  const done = [];
+  const open = [];
+  for (const todo of doneList.value) {
+    if (!todo || seen.has(todo.id)) continue;
+    seen.add(todo.id);
+    todo.completed = true;
+    done.push(todo);
+  }
+  for (const todo of openList.value) {
+    if (!todo || seen.has(todo.id)) continue;
+    seen.add(todo.id);
+    todo.completed = false;
+    open.push(todo);
+  }
+  writingLists = true;
+  props.note.todos = [...done, ...open];
+  doneList.value = done;
+  openList.value = open;
+  dragging.value = false;
+  nextTick(() => { writingLists = false; });
 }
 
 function onAddTodo() {
@@ -379,8 +482,30 @@ function onAddTodo() {
   transition: opacity 0.2s ease;
 }
 
-.note-card:hover .header-actions {
+.note-card:hover .header-actions,
+.header-actions.is-copied {
   opacity: 1;
+}
+
+.copy-slot {
+  position: relative;
+}
+
+.copied-check {
+  animation: copiedPop 0.28s ease;
+}
+
+.copied-hint {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 50%;
+  z-index: 5;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: copiedFade 1s ease forwards;
 }
 
 .header-btn {
@@ -479,6 +604,10 @@ function onAddTodo() {
   position: relative;
   display: flex;
   flex-direction: column;
+}
+
+.todo-list.drop-target {
+  min-height: 32px;
 }
 
 .todo-divider {
@@ -640,6 +769,18 @@ function onAddTodo() {
   right: 0;
   height: 40px;
   cursor: pointer;
+}
+
+@keyframes copiedPop {
+  from { transform: scale(0.55); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes copiedFade {
+  0% { opacity: 0; transform: translateX(-50%) translateY(3px); }
+  18% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  72% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-4px); }
 }
 
 @keyframes fadeInUp {

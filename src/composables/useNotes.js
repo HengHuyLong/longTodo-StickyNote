@@ -166,6 +166,7 @@ export function useNotes() {
       note.todos.push({
         id: generateId(),
         text: text,
+        description: '',
         completed: false,
       });
       note.updatedAt = new Date().toISOString();
@@ -177,14 +178,14 @@ export function useNotes() {
     if (!note) return;
     const index = note.todos.findIndex(t => t.id === todoId);
     if (index === -1) return;
-    const [todo] = note.todos.splice(index, 1);
-    todo.completed = !todo.completed;
+    const todo = { ...note.todos[index], completed: !note.todos[index].completed };
+    const rest = note.todos.filter(t => t.id !== todoId);
     if (todo.completed) {
-      note.todos.unshift(todo);
+      note.todos = [todo, ...rest];
     } else {
-      const firstOpen = note.todos.findIndex(t => !t.completed);
-      if (firstOpen === -1) note.todos.push(todo);
-      else note.todos.splice(firstOpen, 0, todo);
+      const firstOpen = rest.findIndex(t => !t.completed);
+      if (firstOpen === -1) note.todos = [...rest, todo];
+      else note.todos = [...rest.slice(0, firstOpen), todo, ...rest.slice(firstOpen)];
     }
     note.updatedAt = new Date().toISOString();
   }
@@ -200,11 +201,37 @@ export function useNotes() {
     }
   }
 
+  function updateTodoDescription(noteId, todoId, description) {
+    const note = notes.value.find(n => n.id === noteId);
+    if (note) {
+      const todo = note.todos.find(t => t.id === todoId);
+      if (todo) {
+        todo.description = description;
+        note.updatedAt = new Date().toISOString();
+      }
+    }
+  }
+
   function deleteTodo(noteId, todoId) {
     const note = notes.value.find(n => n.id === noteId);
     if (note) {
       note.todos = note.todos.filter(t => t.id !== todoId);
       note.updatedAt = new Date().toISOString();
+    }
+  }
+
+  function reorderTodos(noteId, sourceTodoId, targetTodoId) {
+    if (sourceTodoId === targetTodoId) return;
+    const note = notes.value.find(n => n.id === noteId);
+    if (note) {
+      const sourceIndex = note.todos.findIndex(t => t.id === sourceTodoId);
+      const targetIndex = note.todos.findIndex(t => t.id === targetTodoId);
+      
+      if (sourceIndex !== -1 && targetIndex !== -1) {
+        const [movedItem] = note.todos.splice(sourceIndex, 1);
+        note.todos.splice(targetIndex, 0, movedItem);
+        note.updatedAt = new Date().toISOString();
+      }
     }
   }
 
@@ -245,7 +272,9 @@ export function useNotes() {
     addTodo,
     toggleTodo,
     updateTodo,
+    updateTodoDescription,
     deleteTodo,
+    reorderTodos,
     NOTE_COLORS,
     formatDate,
   };

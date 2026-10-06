@@ -135,7 +135,9 @@
           @add-todo="addTodo"
           @toggle-todo="toggleTodo"
           @update-todo="updateTodo"
+          @update-todo-description="updateTodoDescription"
           @delete-todo="deleteTodo"
+          @reorder-todo="reorderTodos"
           @pop-out="popOutNote"
           @toggle-startup="toggleOpenOnStartup"
         />
@@ -182,7 +184,9 @@ const {
   addTodo,
   toggleTodo,
   updateTodo,
+  updateTodoDescription,
   deleteTodo,
+  reorderTodos,
   NOTE_COLORS,
   formatDate,
   toggleOpenOnStartup,

@@ -52,6 +52,23 @@
             </svg>
           </button>
 
+          <!-- Copy Completed Tasks -->
+          <span v-if="completedCount > 0" class="copy-slot">
+            <button class="action-btn"
+              @click.stop="copyCompletedTasks"
+              :title="copied ? 'Copied' : 'Copy completed tasks'"
+            >
+              <svg v-if="copied" class="copied-check" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M3.5 8.5L6.5 11.5L12.5 4.5" :stroke="note.color.text" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M5.5 4V3C5.5 2.44772 5.94772 2 6.5 2H13.5C14.0523 2 14.5 2.44772 14.5 3V10C14.5 10.5523 14.0523 11 13.5 11H12.5" :stroke="note.color.text" stroke-width="1.5" stroke-linecap="round"/>
+                <rect x="2.5" y="5" width="8" height="9" rx="1" :stroke="note.color.text" stroke-width="1.5"/>
+              </svg>
+            </button>
+            <span v-if="copied" class="copied-hint" :style="{ color: note.color.text }">Copied</span>
+          </span>
+
           <!-- Close window -->
           <button class="action-btn close-btn" @click.stop="closeWindow" title="Close note">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -87,37 +104,67 @@
             />
           </div>
 
-          <TransitionGroup name="task" tag="div" class="todo-list">
-            <TodoItem
-              v-for="todo in doneTodos"
-              :key="todo.id"
-              :todo="todo"
-              :accent-color="note.color.text"
-              :dark-color="note.color.dark"
-              @toggle="onToggleTodo"
-              @update="onUpdateTodo"
-              @delete="onDeleteTodo"
-              @add-next="onAddTodo"
-              ref="todoItemRefs"
-            />
-            <div
-              v-if="doneTodos.length && openTodos.length"
-              key="todo-divider"
-              class="todo-divider"
-            />
-            <TodoItem
-              v-for="todo in openTodos"
-              :key="todo.id"
-              :todo="todo"
-              :accent-color="note.color.text"
-              :dark-color="note.color.dark"
-              @toggle="onToggleTodo"
-              @update="onUpdateTodo"
-              @delete="onDeleteTodo"
-              @add-next="onAddTodo"
-              ref="todoItemRefs"
-            />
-          </TransitionGroup>
+          <template v-if="note.todos.length">
+            <draggable
+              v-model="doneList"
+              item-key="id"
+              :group="{ name: 'tasks', pull: true, put: true }"
+              handle=".todo-checkbox"
+              :delay="140"
+              :delay-on-touch-only="false"
+              :force-fallback="true"
+              :fallback-on-body="true"
+              :animation="150"
+              class="todo-list"
+              :class="{ 'drop-target': doneList.length === 0 && openList.length > 0 }"
+              @start="dragging = true"
+              @end="onDragEnd"
+            >
+              <template #item="{ element: todo }">
+                <TodoItem
+                  :todo="todo"
+                  :accent-color="note.color.text"
+                  :dark-color="note.color.dark"
+                  @toggle="onToggleTodo"
+                  @update="onUpdateTodo"
+                  @update-description="onUpdateTodoDescription"
+                  @delete="onDeleteTodo"
+                  @add-next="onAddTodo"
+                  ref="todoItemRefs"
+                />
+              </template>
+            </draggable>
+            <div class="todo-divider" />
+            <draggable
+              v-model="openList"
+              item-key="id"
+              :group="{ name: 'tasks', pull: true, put: true }"
+              handle=".todo-checkbox"
+              :delay="140"
+              :delay-on-touch-only="false"
+              :force-fallback="true"
+              :fallback-on-body="true"
+              :animation="150"
+              class="todo-list"
+              :class="{ 'drop-target': openList.length === 0 && doneList.length > 0 }"
+              @start="dragging = true"
+              @end="onDragEnd"
+            >
+              <template #item="{ element: todo }">
+                <TodoItem
+                  :todo="todo"
+                  :accent-color="note.color.text"
+                  :dark-color="note.color.dark"
+                  @toggle="onToggleTodo"
+                  @update="onUpdateTodo"
+                  @update-description="onUpdateTodoDescription"
+                  @delete="onDeleteTodo"
+                  @add-next="onAddTodo"
+                  ref="todoItemRefs"
+                />
+              </template>
+            </draggable>
+          </template>
 
           <button class="add-todo-btn" :style="{ color: note.color.dark }" @click="onAddTodo">
             + Add task
@@ -158,6 +205,7 @@
 import { ref, computed, watch, nextTick } from 'vue';
 import { WebviewWindow as Window, getCurrentWebviewWindow as getCurrentWindow } from '@tauri-apps/api/webviewWindow';
 import TodoItem from './TodoItem.vue';
+import draggable from 'vuedraggable';
 import { useNotes, textOn, isLightHex } from '../composables/useNotes.js';
 import { appTheme } from '../composables/useTheme.js';
 
@@ -165,9 +213,15 @@ const props = defineProps({
   noteId: { type: String, required: true }
 });
 
-const { notes, createNote, updateNote, addTodo, toggleTodo, updateTodo, deleteTodo, formatDate, NOTE_COLORS, changeColor } = useNotes();
+const { notes, createNote, updateNote, addTodo, toggleTodo, updateTodo, updateTodoDescription, deleteTodo, reorderTodos, formatDate, NOTE_COLORS, changeColor } = useNotes();
 const appWindow = getCurrentWindow();
 const showColorPicker = ref(false);
+const copied = ref(false);
+let copiedTimer = 0;
+const dragging = ref(false);
+const doneList = ref([]);
+const openList = ref([]);
+let writingLists = false;
 const notesOpen = ref(false);
 const notesRef = ref(null);
 const todoItemRefs = ref([]);
@@ -220,6 +274,17 @@ const formattedDate = computed(() => note.value ? formatDate(note.value.createdA
 const doneTodos = computed(() => (note.value?.todos || []).filter(t => t.completed));
 const openTodos = computed(() => (note.value?.todos || []).filter(t => !t.completed));
 
+watch(
+  () => (note.value?.todos || []).map((t) => `${t.id}:${t.completed ? 1 : 0}`).join('|'),
+  () => {
+    if (writingLists || dragging.value) return;
+    const list = note.value?.todos || [];
+    doneList.value = list.filter((t) => t.completed);
+    openList.value = list.filter((t) => !t.completed);
+  },
+  { immediate: true }
+);
+
 const completedCount = computed(() => doneTodos.value.length);
 
 const progressPercent = computed(() => {
@@ -259,9 +324,54 @@ function onAddTodo() {
     }
   });
 }
+function onDragEnd() {
+  if (!note.value) {
+    dragging.value = false;
+    return;
+  }
+  const seen = new Set();
+  const done = [];
+  const open = [];
+  for (const todo of doneList.value) {
+    if (!todo || seen.has(todo.id)) continue;
+    seen.add(todo.id);
+    todo.completed = true;
+    done.push(todo);
+  }
+  for (const todo of openList.value) {
+    if (!todo || seen.has(todo.id)) continue;
+    seen.add(todo.id);
+    todo.completed = false;
+    open.push(todo);
+  }
+  writingLists = true;
+  note.value.todos = [...done, ...open];
+  doneList.value = done;
+  openList.value = open;
+  dragging.value = false;
+  nextTick(() => { writingLists = false; });
+}
+
 function onToggleTodo(todoId) { toggleTodo(props.noteId, todoId); }
 function onUpdateTodo(todoId, text) { updateTodo(props.noteId, todoId, text); }
+function onUpdateTodoDescription(todoId, desc) { updateTodoDescription(props.noteId, todoId, desc); }
 function onDeleteTodo(todoId) { deleteTodo(props.noteId, todoId); }
+function onReorderTodo(sourceId, targetId) { reorderTodos(props.noteId, sourceId, targetId); }
+
+async function copyCompletedTasks() {
+  if (!note.value || !note.value.todos) return;
+  const completed = note.value.todos.filter(t => t.completed);
+  if (completed.length === 0) return;
+  const text = completed.map(t => `- ${t.text}`).join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    copied.value = true;
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { copied.value = false; }, 1000);
+  } catch (err) {
+    console.error(err);
+  }
+}
 
 function selectColor(color) {
   changeColor(props.noteId, color);
@@ -383,6 +493,15 @@ async function startDrag() {
   pointer-events: none;
   font-family: 'Inter', sans-serif;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 280px) {
+  .note-date {
+    display: none;
+  }
 }
 
 .window-actions {
@@ -401,6 +520,28 @@ async function startDrag() {
   justify-content: center;
   cursor: pointer;
 }
+.copy-slot {
+  position: relative;
+}
+
+.copied-check {
+  animation: copiedPop 0.28s ease;
+}
+
+.copied-hint {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  z-index: 5;
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: copiedFade 1s ease forwards;
+}
+
 .action-btn:hover { background: rgba(0,0,0,0.1); }
 .is-dark .action-btn:hover { background: rgba(255,255,255,0.12); }
 .close-btn:hover { background: rgba(220, 20, 60, 0.15); }
@@ -473,6 +614,10 @@ async function startDrag() {
   position: relative;
   display: flex;
   flex-direction: column;
+}
+
+.todo-list.drop-target {
+  min-height: 32px;
 }
 
 .todo-divider {
@@ -618,6 +763,18 @@ async function startDrag() {
   margin-top: 8px;
   font-family: 'Inter', sans-serif;
   font-weight: 500;
+}
+
+@keyframes copiedPop {
+  from { transform: scale(0.55); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes copiedFade {
+  0% { opacity: 0; transform: translateX(-50%) translateY(3px); }
+  18% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  72% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-4px); }
 }
 
 @keyframes slideDown {
